@@ -1,33 +1,37 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// These should be set as Environment Variables in your hosting provider (e.g., Cloudflare Pages)
-// Using optional chaining and fallback to empty string to prevent ReferenceErrors
-const SUPABASE_URL = (typeof process !== 'undefined' ? process.env?.SUPABASE_URL : '') || '';
-const SUPABASE_ANON_KEY = (typeof process !== 'undefined' ? process.env?.SUPABASE_ANON_KEY : '') || '';
+/**
+ * Cloudflare Pages & Vite Compatibility:
+ * 1. For security, Vite only exposes variables prefixed with VITE_ to the browser.
+ * 2. We use static string access (process.env.VAR) so the build tool 
+ *    can find and replace these values during deployment.
+ */
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 
-const isConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+// Configuration check
+const isConfigured = SUPABASE_URL.length > 0 && SUPABASE_ANON_KEY.length > 0;
 
 if (!isConfigured) {
-  console.error(
-    "Supabase configuration is missing. Please ensure SUPABASE_URL and SUPABASE_ANON_KEY " +
-    "are set in your environment variables (Cloudflare Pages Secrets or .env file)."
-  );
+  console.group("🔧 Supabase Setup Guide");
+  console.error("Status: Configuration Missing");
+  console.info("Action Required: In your Cloudflare Pages Dashboard (Settings > Environment variables):");
+  console.info("1. Rename SUPABASE_URL to VITE_SUPABASE_URL");
+  console.info("2. Rename SUPABASE_ANON_KEY to VITE_SUPABASE_ANON_KEY");
+  console.info("3. IMPORTANT: You must trigger a NEW DEPLOYMENT for these to work.");
+  console.groupEnd();
 }
 
 /**
- * We only initialize the client if the required keys are present.
- * If they are missing, we export a Proxy object that will throw a descriptive 
- * error if any part of the app attempts to use it. This prevents the 
- * "supabaseUrl is required" crash at load time.
+ * Export the client if configured, otherwise a proxy that provides clear errors.
  */
 export const supabase = isConfigured
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : new Proxy({} as any, {
       get(_, prop) {
         throw new Error(
-          `Supabase Client Error: Attempted to call '${String(prop)}' but credentials are missing. ` +
-          `Check your environment variables for SUPABASE_URL and SUPABASE_ANON_KEY.`
+          `Supabase Error: Credentials missing. Use VITE_ prefix in Cloudflare dashboard and RE-DEPLOY.`
         );
       }
     });
