@@ -1,25 +1,28 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// These should be set as Environment Variables in your hosting provider (e.g., Cloudflare Pages)
-// Using optional chaining and fallback to empty string to prevent ReferenceErrors
-const SUPABASE_URL = (typeof process !== 'undefined' ? process.env?.SUPABASE_URL : '') || '';
-const SUPABASE_ANON_KEY = (typeof process !== 'undefined' ? process.env?.SUPABASE_ANON_KEY : '') || '';
+/**
+ * Cloudflare Pages and most bundlers perform static string replacement.
+ * We use direct access here so the build tool can find and replace these 
+ * literals with your actual values from the dashboard.
+ */
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
-const isConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+// Check if replacement happened successfully
+const isConfigured = SUPABASE_URL.length > 0 && SUPABASE_ANON_KEY.length > 0;
 
 if (!isConfigured) {
   console.error(
-    "Supabase configuration is missing. Please ensure SUPABASE_URL and SUPABASE_ANON_KEY " +
-    "are set in your environment variables (Cloudflare Pages Secrets or .env file)."
+    "Supabase configuration is missing. \n" +
+    "1. Ensure variables are added in Cloudflare Pages (Settings > Environment variables).\n" +
+    "2. Ensure you have triggered a NEW DEPLOYMENT after adding the variables.\n" +
+    "3. Check that the names match: SUPABASE_URL and SUPABASE_ANON_KEY."
   );
 }
 
 /**
- * We only initialize the client if the required keys are present.
- * If they are missing, we export a Proxy object that will throw a descriptive 
- * error if any part of the app attempts to use it. This prevents the 
- * "supabaseUrl is required" crash at load time.
+ * Export the client if configured, otherwise a proxy that warns on usage.
  */
 export const supabase = isConfigured
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -27,7 +30,7 @@ export const supabase = isConfigured
       get(_, prop) {
         throw new Error(
           `Supabase Client Error: Attempted to call '${String(prop)}' but credentials are missing. ` +
-          `Check your environment variables for SUPABASE_URL and SUPABASE_ANON_KEY.`
+          `Please check your Cloudflare Pages environment variables.`
         );
       }
     });
