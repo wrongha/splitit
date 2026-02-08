@@ -1,16 +1,40 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { TripDashboard } from './components/TripDashboard';
-import { TripDetails } from './components/TripDetails';
-import { Plane, Globe, RefreshCw, Loader2, CheckCircle } from 'lucide-react';
+import { TripDetails, getParticipantTheme } from './components/TripDetails';
+import { UserSelectionScreen } from './components/UserSelectionScreen';
+import { Plane, Globe, RefreshCw, Loader2, LogOut } from 'lucide-react';
 import { supabase } from './services/supabase';
-import { Currency } from './types';
+import { Currency, UserProfile } from './types';
 
 const App: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [isNewTripFlow, setIsNewTripFlow] = useState(false);
   const [globalCurrencies, setGlobalCurrencies] = useState<Currency[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Check for persisted user
+    const savedUser = localStorage.getItem('split_it_user');
+    if (savedUser) {
+      setCurrentUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  const handleUserSelect = (user: UserProfile) => {
+    setCurrentUser(user);
+    if (user.name !== 'Guest') {
+        localStorage.setItem('split_it_user', JSON.stringify(user));
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('split_it_user');
+    window.location.hash = '';
+  };
 
   const fetchGlobalRates = useCallback(async () => {
     const { data, error } = await supabase
@@ -27,43 +51,15 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const syncWithMarket = async () => {
-    setSyncing(true);
-    try {
-      const response = await fetch('https://api.frankfurter.app/latest?from=USD');
-      const data = await response.json();
-      
-      if (data && data.rates) {
-        const updates = Object.entries(data.rates).map(([code, rate]) => ({
-          code,
-          rate_to_usd: rate,
-          updated_at: new Date().toISOString()
-        }));
-
-        // Also update USD explicitly
-        updates.push({ code: 'USD', rate_to_usd: 1, updated_at: new Date().toISOString() });
-
-        for (const update of updates) {
-          await supabase
-            .from('currencies')
-            .update({ rate_to_usd: update.rate_to_usd, updated_at: update.updated_at })
-            .eq('code', update.code);
-        }
-        await fetchGlobalRates();
-      }
-    } catch (err) {
-      console.error("Failed to sync rates:", err);
-      alert("Rate sync failed. Please check your connection.");
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   useEffect(() => {
     fetchGlobalRates();
     const handleHashChange = () => {
       const hash = window.location.hash.replace('#', '');
-      setSelectedTripId(hash.startsWith('trip/') ? hash.split('/')[1] : null);
+      const isNew = hash.endsWith('/new');
+      const tripId = isNew ? hash.replace('/new', '').split('/')[1] : (hash.startsWith('trip/') ? hash.split('/')[1] : null);
+      
+      setSelectedTripId(tripId);
+      setIsNewTripFlow(isNew);
     };
     window.addEventListener('hashchange', handleHashChange);
     handleHashChange();
@@ -74,41 +70,47 @@ const App: React.FC = () => {
     window.location.hash = '';
   };
 
+  const handleSelectTrip = (id: string, isNew: boolean = false) => {
+    window.location.hash = isNew ? `trip/${id}/new` : `trip/${id}`;
+  };
+
   const ratesMap = globalCurrencies.reduce((acc, c) => ({ ...acc, [c.code]: c.rate_to_usd }), {} as Record<string, number>);
+  const userTheme = currentUser ? getParticipantTheme(currentUser.color) : null;
+
+  if (!currentUser) {
+    return <UserSelectionScreen onSelectUser={handleUserSelect} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 h-20 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div 
             className="flex items-center gap-3 cursor-pointer group" 
             onClick={navigateToDashboard}
           >
-            <div className="bg-indigo-600 p-2.5 rounded-xl text-white group-hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 group-active:scale-95">
-              <Plane size={24} />
+            <div className="bg-indigo-600 p-2 rounded-lg text-white group-hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 group-active:scale-95">
+              <Plane size={20} />
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-900 leading-none">Split-It</h1>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mt-1">Travel Smarter</p>
+              <h1 className="text-lg font-black text-slate-900 leading-none tracking-tight">Split-It</h1>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter mt-0.5">Travel Smarter</p>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex flex-col items-end mr-2">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Market Sync</span>
-              <span className="text-xs font-bold text-slate-600">{lastSync ? `Last updated ${lastSync}` : 'Rates pending...'}</span>
-            </div>
+          <div className="flex items-center gap-4">
             <button 
-              onClick={syncWithMarket}
-              disabled={syncing}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 transition-all font-bold text-sm ${
-                syncing 
-                  ? 'border-slate-100 bg-slate-50 text-slate-400' 
-                  : 'border-indigo-100 bg-indigo-50 text-indigo-700 hover:border-indigo-200 hover:bg-indigo-100'
-              }`}
+              onClick={handleLogout}
+              className="flex items-center gap-2 pl-2 pr-3 py-1.5 bg-white border border-slate-100 rounded-xl hover:border-indigo-100 hover:shadow-sm transition-all group"
+              title="Switch User"
             >
-              {syncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-              {syncing ? 'Syncing...' : 'Sync Rates'}
+              <div className={`w-7 h-7 rounded-md flex items-center justify-center text-sm ${userTheme?.bg} ${userTheme?.text}`}>
+                {currentUser.mascot}
+              </div>
+              <div className="text-left hidden sm:block">
+                <p className="text-[11px] font-black text-slate-900 leading-none">{currentUser.name}</p>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5 group-hover:text-indigo-500 transition-colors">Switch</p>
+              </div>
             </button>
           </div>
         </div>
@@ -121,9 +123,14 @@ const App: React.FC = () => {
             onBack={navigateToDashboard}
             globalRates={ratesMap}
             allAvailableCurrencies={globalCurrencies}
+            autoOpenAdd={isNewTripFlow}
           />
         ) : (
-          <TripDashboard onSelectTrip={(id) => window.location.hash = `trip/${id}`} />
+          <TripDashboard 
+            onSelectTrip={handleSelectTrip} 
+            currentUser={currentUser}
+            allAvailableCurrencies={globalCurrencies}
+          />
         )}
       </main>
 
