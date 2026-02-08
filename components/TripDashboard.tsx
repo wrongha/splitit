@@ -1,12 +1,15 @@
 
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../services/supabase';
-import { Trip, Participant } from '../types';
-import { Plus, Calendar, MapPin, ChevronRight, Loader2, Trash2, Check, X, Globe } from 'lucide-react';
+import { Trip, Participant, UserProfile, Currency } from '../types';
+import { Plus, Calendar, MapPin, ChevronRight, Loader2, Trash2, Check, X, User, Archive, PlayCircle, Clock } from 'lucide-react';
 import { COLOR_MAP } from './TripDetails';
+import { AddTripModal } from './AddTripModal';
 
 interface TripDashboardProps {
-  onSelectTrip: (id: string) => void;
+  onSelectTrip: (id: string, isNew?: boolean) => void;
+  currentUser: UserProfile;
+  allAvailableCurrencies: Currency[];
 }
 
 interface TripWithParticipants extends Trip {
@@ -19,98 +22,54 @@ export const FLAG_OPTIONS = [
   '🌲', '⛷️', '🚕', '🥐', '🍹', '🌅', '🎒'
 ];
 
-export const TripDashboard: React.FC<TripDashboardProps> = ({ onSelectTrip }) => {
-  const [trips, setTrips] = useState<TripWithParticipants[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
+const getRelativeTime = (dateString: string) => {
+  const now = new Date();
+  const date = new Date(dateString);
+  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
   
-  const [newTripName, setNewTripName] = useState('');
-  const [firstParticipant, setFirstParticipant] = useState('');
-  const [flagEmoji, setFlagEmoji] = useState('✈️');
-  const [defaultCurrency, setDefaultCurrency] = useState('USD');
+  if (diffInSeconds < 60) return 'Just now';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+  return date.toLocaleDateString();
+};
 
+export const TripDashboard: React.FC<TripDashboardProps> = ({ onSelectTrip, currentUser, allAvailableCurrencies }) => {
+  const [trips, setTrps] = useState<TripWithParticipants[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewFilter, setViewFilter] = useState<'mine' | 'all'>('mine');
+  const [statusFilter, setStatusFilter] = useState<'active' | 'archived'>('active');
+  
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTrips();
-  }, []);
+  }, [currentUser]);
 
   const fetchTrips = async () => {
     setLoading(true);
     const { data: tripData, error: fetchError } = await supabase
       .from('trips')
       .select('*, participants(*)')
-      .order('created_at', { ascending: false });
+      .order('updated_at', { ascending: false });
     
     if (fetchError) {
-      setError("Sync failed: Check if database columns exist in Supabase.");
+      setError("Sync failed: Check database configuration.");
     } else if (tripData) {
-      setTrips(tripData as TripWithParticipants[]);
+      setTrps(tripData as TripWithParticipants[]);
     }
     setLoading(false);
-  };
-
-  const handleCreateTrip = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTripName.trim() || !firstParticipant.trim() || creating) return;
-
-    setCreating(true);
-    setError(null);
-
-    const colorKeys = Object.keys(COLOR_MAP);
-    const randomColor = colorKeys[Math.floor(Math.random() * colorKeys.length)];
-
-    try {
-      const { data: tripData, error: tripError } = await supabase
-        .from('trips')
-        .insert([{ 
-          name: newTripName,
-          default_currency: defaultCurrency,
-          color_key: randomColor,
-          flag_emoji: flagEmoji || '✈️'
-        }])
-        .select()
-        .single();
-
-      if (tripError) throw tripError;
-
-      if (tripData) {
-        await Promise.all([
-          supabase.from('participants').insert([{ 
-            trip_id: tripData.id, 
-            name: firstParticipant, 
-            color: 'indigo', 
-            mascot: '👤' 
-          }]),
-          supabase.from('trip_currencies').insert([
-            { trip_id: tripData.id, currency_code: 'USD' },
-            { trip_id: tripData.id, currency_code: defaultCurrency }
-          ].filter((v, i, a) => a.findIndex(t => t.currency_code === v.currency_code) === i))
-        ]);
-        
-        setNewTripName('');
-        setFirstParticipant('');
-        setFlagEmoji('✈️');
-        setIsAdding(false);
-        await fetchTrips();
-      }
-    } catch (err: any) {
-      setError(err.message || "Failed to create trip.");
-    } finally {
-      setCreating(false);
-    }
   };
 
   const handleDeleteTrip = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setDeletingId(id);
     try {
-      const { error } = await supabase.from('trips').delete().eq('id', id);
-      if (error) throw error;
-      setTrips(prev => prev.filter(t => t.id !== id));
+      await supabase.from('trips').delete().eq('id', id);
+      setTrps(prev => prev.filter(t => t.id !== id));
       setDeleteConfirmId(null);
     } catch (err: any) {
       alert("Error deleting trip: " + err.message);
@@ -119,94 +78,94 @@ export const TripDashboard: React.FC<TripDashboardProps> = ({ onSelectTrip }) =>
     }
   };
 
+  const displayedTrips = trips.filter(trip => {
+    // Status filter
+    const matchesStatus = statusFilter === 'archived' ? !!trip.is_archived : !trip.is_archived;
+    if (!matchesStatus) return false;
+
+    // View filter
+    if (viewFilter === 'all') return true;
+    return trip.participants.some(p => p.name.toLowerCase() === currentUser.name.toLowerCase());
+  });
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-20">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-4xl font-black text-slate-900 tracking-tight">Your Trips</h2>
-          <p className="text-slate-500 font-bold text-sm tracking-tight uppercase opacity-60">Archive of your group adventures</p>
-        </div>
-        {!isAdding && (
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div>
+            <h2 className="text-4xl font-black text-slate-900 tracking-tight">
+              Hello, {currentUser.name}!
+            </h2>
+            <p className="text-slate-500 font-bold text-sm tracking-tight uppercase opacity-60">Ready for your next adventure?</p>
+          </div>
           <button 
-            onClick={() => setIsAdding(true)}
+            onClick={() => setIsModalOpen(true)}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-7 py-4 rounded-2xl font-black shadow-xl shadow-indigo-100 transition-all active:scale-95 uppercase tracking-widest text-xs"
           >
             <Plus size={20} /> New Trip
           </button>
-        )}
-      </div>
-
-      {isAdding && (
-        <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 animate-in slide-in-from-top-6 duration-300">
-          <form onSubmit={handleCreateTrip} className="space-y-8">
-            <h3 className="text-3xl font-black text-slate-900">Launch New Journey</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Destination Icon</label>
-                <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-4 gap-2 p-3 bg-slate-50 rounded-2xl border-2 border-slate-100 max-h-[200px] overflow-y-auto scrollbar-hide">
-                  {FLAG_OPTIONS.map(flag => (
-                    <button 
-                      key={flag} 
-                      type="button" 
-                      onClick={() => setFlagEmoji(flag)}
-                      className={`text-2xl p-2 rounded-xl transition-all flex items-center justify-center hover:scale-110 active:scale-95 ${flagEmoji === flag ? 'bg-white shadow-md ring-2 ring-indigo-500' : 'opacity-60 hover:opacity-100 grayscale hover:grayscale-0'}`}
-                    >
-                      {flag}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="md:col-span-2 space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Trip Name</label>
-                  <input required autoFocus type="text" placeholder="e.g. Kyoto Bloom" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 bg-white focus:border-indigo-500 outline-none text-slate-900 font-bold transition-all placeholder:text-slate-300 shadow-sm" value={newTripName} onChange={(e) => setNewTripName(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Base Currency</label>
-                  <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 bg-white focus:border-indigo-500 outline-none text-slate-900 font-black transition-all cursor-pointer shadow-sm" value={defaultCurrency} onChange={(e) => setDefaultCurrency(e.target.value)}>
-                    <option value="USD">USD ($)</option>
-                    <option value="EUR">EUR (€)</option>
-                    <option value="JPY">JPY (¥)</option>
-                    <option value="GBP">GBP (£)</option>
-                    <option value="HKD">HKD ($)</option>
-                  </select>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Your Identity</label>
-                <input required type="text" placeholder="e.g. Alex" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 bg-white focus:border-indigo-500 outline-none text-slate-900 font-bold transition-all placeholder:text-slate-300 shadow-sm" value={firstParticipant} onChange={(e) => setFirstParticipant(e.target.value)} />
-              </div>
-            </div>
-
-            <div className="flex gap-4 pt-6 border-t border-slate-50">
-              <button type="submit" disabled={creating} className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white px-12 py-5 rounded-[1.5rem] font-black transition-all flex items-center gap-3 shadow-xl shadow-indigo-100 active:scale-95 uppercase tracking-widest text-xs">
-                {creating ? <Loader2 className="animate-spin" size={18} /> : null}
-                {creating ? 'Building...' : 'Initiate Trip'}
-              </button>
-              <button type="button" onClick={() => setIsAdding(false)} className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-10 py-5 rounded-[1.5rem] font-black transition-colors uppercase tracking-widest text-xs">Cancel</button>
-            </div>
-            {error && <div className="text-red-600 text-[10px] font-black bg-red-50 p-5 rounded-2xl border border-red-100 uppercase tracking-widest leading-relaxed shadow-sm">{error}</div>}
-          </form>
         </div>
-      )}
+
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex p-1.5 bg-white border border-slate-200 rounded-2xl w-fit shadow-sm">
+            <button 
+              onClick={() => setViewFilter('mine')}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${viewFilter === 'mine' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
+            >
+              <User size={14} /> My Trips
+            </button>
+            <button 
+              onClick={() => setViewFilter('all')}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${viewFilter === 'all' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
+            >
+              <Archive size={14} /> Explore All
+            </button>
+          </div>
+
+          <div className="flex p-1.5 bg-white border border-slate-200 rounded-2xl w-fit shadow-sm ml-auto sm:ml-0">
+            <button 
+              onClick={() => setStatusFilter('active')}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${statusFilter === 'active' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
+            >
+              Active
+            </button>
+            <button 
+              onClick={() => setStatusFilter('archived')}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${statusFilter === 'archived' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
+            >
+              Archived
+            </button>
+          </div>
+        </div>
+      </div>
 
       {loading ? (
         <div className="flex flex-col items-center justify-center py-24 gap-4">
           <Loader2 className="animate-spin text-indigo-500" size={40} />
           <p className="text-slate-400 font-black uppercase tracking-widest text-xs">Accessing Archives...</p>
         </div>
-      ) : trips.length === 0 ? (
+      ) : displayedTrips.length === 0 ? (
         <div className="bg-white border-2 border-dashed border-slate-200 rounded-[3rem] p-24 flex flex-col items-center justify-center text-center">
-          <div className="bg-indigo-50 p-6 rounded-full text-indigo-500 mb-6 shadow-inner shadow-indigo-100/50"><MapPin size={48} /></div>
-          <h3 className="text-2xl font-black text-slate-900 tracking-tight">No trips found</h3>
-          <p className="text-slate-400 font-bold max-w-sm mt-3 mb-8 uppercase tracking-tighter">Your travel expense history is empty. Launch a new trip to start tracking.</p>
+          <div className="bg-indigo-50 p-6 rounded-full text-indigo-500 mb-6 shadow-inner shadow-indigo-100/50">
+            {statusFilter === 'archived' ? <Archive size={48} /> : <MapPin size={48} />}
+          </div>
+          <h3 className="text-2xl font-black text-slate-900 tracking-tight">
+            {statusFilter === 'archived' ? 'No archived trips' : 'No trips found'}
+          </h3>
+          <p className="text-slate-400 font-bold max-w-sm mt-3 mb-8 uppercase tracking-tighter">
+            {statusFilter === 'archived' 
+              ? "Your vault is empty. You can archive completed trips from the settings menu."
+              : (viewFilter === 'mine' 
+                ? "You haven't been added to any active trips yet. Create one or switch to 'Explore All'." 
+                : "The archives are empty. Launch a new trip to start tracking.")}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {trips.map((trip) => {
+          {displayedTrips.map((trip) => {
             const tripTheme = COLOR_MAP[trip.color_key || 'indigo'] || COLOR_MAP.indigo;
             return (
-              <div key={trip.id} onClick={() => onSelectTrip(trip.id)} className="bg-white border border-slate-200 rounded-[2.5rem] p-8 hover:shadow-2xl hover:shadow-indigo-50/50 hover:border-indigo-300 cursor-pointer transition-all group relative overflow-hidden flex flex-col justify-between h-80">
+              <div key={trip.id} onClick={() => onSelectTrip(trip.id)} className={`bg-white border border-slate-200 rounded-[2.5rem] p-8 hover:shadow-2xl hover:shadow-indigo-50/50 hover:border-indigo-300 cursor-pointer transition-all group relative overflow-hidden flex flex-col justify-between h-80 ${trip.is_archived ? 'grayscale-[0.5] opacity-90' : ''}`}>
                 <div className={`absolute top-0 right-0 w-40 h-40 ${tripTheme.bg} opacity-50 rounded-bl-[4rem] -mr-16 -mt-16 transition-all group-hover:scale-110 group-hover:opacity-70`} />
                 
                 <div className="relative">
@@ -214,6 +173,11 @@ export const TripDashboard: React.FC<TripDashboardProps> = ({ onSelectTrip }) =>
                     <div className="flex flex-col gap-1 pr-8">
                       <span className="text-3xl mb-1">{trip.flag_emoji || '✈️'}</span>
                       <h3 className="text-3xl font-black text-slate-800 group-hover:text-indigo-600 transition-colors tracking-tight leading-tight">{trip.name}</h3>
+                      {trip.is_archived && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-600 tracking-widest mt-1">
+                          <Archive size={12} /> Archived
+                        </div>
+                      )}
                     </div>
                     {deleteConfirmId !== trip.id ? (
                       <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(trip.id); }} className="text-slate-300 hover:text-red-500 p-2.5 rounded-xl hover:bg-red-50 transition-all md:opacity-0 group-hover:opacity-100"><Trash2 size={22} /></button>
@@ -224,7 +188,10 @@ export const TripDashboard: React.FC<TripDashboardProps> = ({ onSelectTrip }) =>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-4"><Calendar size={12} className="text-indigo-400" /><span>EST. {new Date(trip.created_at).toLocaleDateString()}</span></div>
+                  <div className="flex flex-col gap-1 mt-4">
+                    <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]"><Calendar size={12} className="text-indigo-400" /><span>EST. {new Date(trip.created_at).toLocaleDateString()}</span></div>
+                    <div className="flex items-center gap-2 text-indigo-500 text-[10px] font-black uppercase tracking-[0.2em]"><Clock size={12} className="text-indigo-500" /><span>Active {getRelativeTime(trip.updated_at)}</span></div>
+                  </div>
                 </div>
 
                 <div className="flex items-end justify-between relative mt-auto pt-6">
@@ -256,6 +223,18 @@ export const TripDashboard: React.FC<TripDashboardProps> = ({ onSelectTrip }) =>
             );
           })}
         </div>
+      )}
+
+      {isModalOpen && (
+        <AddTripModal 
+          currentUser={currentUser}
+          allCurrencies={allAvailableCurrencies}
+          onClose={() => setIsModalOpen(false)}
+          onSuccess={(tripId) => {
+            setIsModalOpen(false);
+            onSelectTrip(tripId, true);
+          }}
+        />
       )}
     </div>
   );

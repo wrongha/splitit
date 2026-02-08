@@ -11,8 +11,15 @@ interface SettlementViewProps {
   participants: Participant[];
   rates: Record<string, number>;
   enabledCurrencies: string[];
+  baseCurrency: string;
   onSettled: () => void;
 }
+
+const formatValue = (val: number) => {
+  return val % 1 === 0 
+    ? val.toLocaleString(undefined, { maximumFractionDigits: 0 }) 
+    : val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
 export const SettlementView: React.FC<SettlementViewProps> = ({ 
   tripId, 
@@ -20,9 +27,10 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
   participants, 
   rates, 
   enabledCurrencies,
+  baseCurrency,
   onSettled
 }) => {
-  const [displayCurrency, setDisplayCurrency] = useState(enabledCurrencies[0] || 'USD');
+  const [displayCurrency, setDisplayCurrency] = useState(baseCurrency);
   const [settlingItem, setSettlingItem] = useState<{from: string, to: string, amount: number, fromId: string, toId: string} | null>(null);
   const [settleAmount, setSettleAmount] = useState<string>('');
   const [settleCurrency, setSettleCurrency] = useState(displayCurrency);
@@ -115,18 +123,21 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
     );
   }
 
+  // Ensure base currency is always available in selector and shown first
+  const selectorCurrencies = Array.from(new Set([baseCurrency, ...enabledCurrencies])).slice(0, 5);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200">
         <div className="flex items-center gap-2 text-slate-700 text-sm font-semibold"><Info size={18} className="text-indigo-500" /><span>Optimized repayment path.</span></div>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-slate-500 uppercase">View In:</span>
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">VIEW IN:</span>
           <div className="flex bg-slate-100 p-1 rounded-lg">
-            {enabledCurrencies.slice(0, 4).map(curr => (
+            {selectorCurrencies.map(curr => (
               <button 
                 key={curr}
                 onClick={() => setDisplayCurrency(curr)}
-                className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${displayCurrency === curr ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`px-3 py-1 rounded-md text-[10px] font-black transition-all uppercase ${displayCurrency === curr ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 {curr}
               </button>
@@ -141,7 +152,8 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
           const toPart = participants.find(p => p.id === s.toId);
           const fromTheme = getParticipantTheme(fromPart?.color);
           const toTheme = getParticipantTheme(toPart?.color);
-          const displayAmount = (s.amount * (rates[displayCurrency] || 1)).toFixed(2);
+          const rawAmount = s.amount * (rates[displayCurrency] || 1);
+          const displayAmount = formatValue(rawAmount);
 
           return (
             <div key={idx} className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 group hover:border-indigo-200 transition-all">
@@ -172,10 +184,10 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
                 <button 
                   onClick={() => {
                     setSettlingItem(s);
-                    setSettleAmount((s.amount * (rates[displayCurrency] || 1)).toFixed(2));
+                    setSettleAmount(formatValue(rawAmount));
                     setSettleCurrency(displayCurrency);
                   }}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-2xl text-sm font-black shadow-lg shadow-indigo-100 transition-all active:scale-95 uppercase tracking-widest"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-2xl text-[10px] font-black shadow-lg shadow-indigo-100 transition-all active:scale-95 uppercase tracking-widest"
                 >
                   Settle
                 </button>
@@ -204,7 +216,7 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
                     required 
                     type="number" 
                     step="0.01" 
-                    className="w-full px-5 py-5 bg-white rounded-2xl border-2 border-slate-200 focus:border-indigo-500 outline-none font-black text-2xl text-slate-900 transition-all shadow-sm" 
+                    className="w-full px-5 py-5 bg-white rounded-2xl border-2 border-slate-200 focus:border-indigo-500 outline-none font-black text-2xl text-slate-900 transition-all shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
                     value={settleAmount} 
                     onChange={e => setSettleAmount(e.target.value)}
                   />
@@ -212,7 +224,7 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Currency</label>
                   <select 
-                    className="w-full px-3 py-5 bg-white rounded-2xl border-2 border-slate-200 outline-none text-base font-black text-slate-900 focus:border-indigo-500 transition-all cursor-pointer shadow-sm"
+                    className="w-full px-3 py-5 bg-white rounded-2xl border-2 border-slate-200 outline-none text-base font-black text-slate-900 focus:border-indigo-500 transition-all cursor-pointer shadow-sm appearance-none text-center"
                     value={settleCurrency}
                     onChange={e => setSettleCurrency(e.target.value)}
                   >
@@ -232,7 +244,7 @@ export const SettlementView: React.FC<SettlementViewProps> = ({
                 </button>
                 <button 
                   type="button"
-                  onClick={() => setSettleAmount((settlingItem.amount * (rates[settleCurrency] || 1)).toFixed(2))}
+                  onClick={() => setSettleAmount(formatValue(settlingItem.amount * (rates[settleCurrency] || 1)))}
                   className="w-full bg-slate-100 text-slate-400 py-4 rounded-[1.5rem] font-black text-xs hover:bg-slate-200 transition-colors uppercase tracking-widest"
                 >
                   Use Suggested Balance

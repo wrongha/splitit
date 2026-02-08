@@ -4,9 +4,13 @@ export interface Trip {
   name: string;
   owner_id?: string;
   created_at: string;
-  default_currency?: string;
-  color_key?: string; // Random color key for trip styling
-  flag_emoji?: string; // Country flag or trip icon
+  updated_at: string;
+  default_currency: string;
+  color_key?: string;
+  flag_emoji?: string;
+  currency_method: 'fixed' | 'realtime';
+  fixed_rates: Record<string, number>;
+  is_archived?: boolean;
 }
 
 export interface Participant {
@@ -14,8 +18,14 @@ export interface Participant {
   trip_id: string;
   name: string;
   user_id?: string;
-  color?: string; // Participant's custom theme color
-  mascot?: string; // Participant's emoji mascot
+  color?: string;
+  mascot?: string;
+}
+
+export interface UserProfile {
+  name: string;
+  mascot: string;
+  color: string;
 }
 
 export interface Expense {
@@ -24,8 +34,10 @@ export interface Expense {
   expense_name: string;
   amount: number;
   currency: string;
+  exchange_rate: number; // Rate relative to the trip's base currency
   expense_date: string;
-  category: string; // New field for expense categorization
+  updated_at: string;
+  category: string;
   payers?: ExpensePayer[];
   splits?: ExpenseSplit[];
 }
