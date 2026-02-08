@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { UserProfile, Currency } from '../types';
-import { X, Check, Loader2, Plus, ChevronRight, ArrowLeft, Users, UserPlus, Star, Info, Zap, Lock } from 'lucide-react';
+import { X, Check, Loader2, Plus, ChevronRight, ArrowLeft, Users, Star, Info, Zap, Lock } from 'lucide-react';
 import { COLOR_MAP } from './TripDetails';
 import { FLAG_OPTIONS } from './TripDashboard';
 
@@ -39,41 +39,39 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
   }, [currentUser]);
 
   const fetchSuggestions = async () => {
-    const { data: myTrips } = await supabase
-      .from('participants')
-      .select('trip_id')
-      .eq('name', currentUser.name);
-
-    const myTripIds = myTrips?.map(t => t.trip_id) || [];
-
+    if (!currentUser.id) return;
+    
+    // 1. Get IDs of trips current user is in
+    const { data: myTrips } = await supabase.from('participants').select('trip_id').eq('user_id', currentUser.id);
+    const tripIds = myTrips?.map(t => t.trip_id) || [];
+    
     let companionData: any[] = [];
-    if (myTripIds.length > 0) {
+    if (tripIds.length > 0) {
+      // 2. Find common companions in those trips
       const { data } = await supabase
         .from('participants')
-        .select('name, mascot, color')
-        .in('trip_id', myTripIds)
-        .neq('name', currentUser.name);
+        .select('name, mascot, color, user_id')
+        .in('trip_id', tripIds)
+        .neq('user_id', currentUser.id);
       companionData = data || [];
     }
 
     const uniqueCompanions = new Map<string, UserProfile>();
-    companionData.forEach(p => uniqueCompanions.set(p.name, p as UserProfile));
+    companionData.forEach(p => {
+      if (!p.user_id) return;
+      uniqueCompanions.set(p.name.toLowerCase(), { id: p.user_id, name: p.name, mascot: p.mascot || '👤', color: p.color || 'indigo' });
+    });
 
-    if (uniqueCompanions.size < 4) {
-      const { data: otherUsers } = await supabase
-        .from('participants')
-        .select('name, mascot, color')
-        .neq('name', currentUser.name)
-        .limit(10);
-      
-      otherUsers?.forEach(p => {
-        if (uniqueCompanions.size < 6) {
-          uniqueCompanions.set(p.name, p as UserProfile);
+    if (uniqueCompanions.size < 6) {
+      const { data: globalUsers } = await supabase.from('users').select('*').neq('id', currentUser.id).limit(10);
+      globalUsers?.forEach(u => {
+        if (!uniqueCompanions.has(u.name.toLowerCase())) {
+          uniqueCompanions.set(u.name.toLowerCase(), u as UserProfile);
         }
       });
     }
 
-    setSuggestions(Array.from(uniqueCompanions.values()).slice(0, 4));
+    setSuggestions(Array.from(uniqueCompanions.values()).slice(0, 6));
   };
 
   const toggleCurrency = (code: string) => {
@@ -91,10 +89,22 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
 
   const handleAddParticipant = (pName: string) => {
     const trimmed = pName.trim();
-    if (trimmed && !participants.includes(trimmed) && trimmed !== currentUser.name) {
-      setParticipants([...participants, trimmed]);
-      setTempParticipant('');
+    if (!trimmed) return;
+    
+    // Case-insensitive checks
+    const lowerName = trimmed.toLowerCase();
+    if (lowerName === currentUser.name.toLowerCase()) {
+      alert("You are already included in the trip!");
+      return;
     }
+    
+    if (participants.some(p => p.toLowerCase() === lowerName)) {
+      alert("A traveler with this name is already in your list. Suggest a unique name.");
+      return;
+    }
+    
+    setParticipants([...participants, trimmed]);
+    setTempParticipant('');
   };
 
   const handleSubmit = async () => {
@@ -105,7 +115,6 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
     const randomColor = colorKeys[Math.floor(Math.random() * colorKeys.length)];
 
     try {
-      // Fetch initial rates relative to the base currency
       const ratesResponse = await fetch(`https://api.frankfurter.app/latest?from=${defaultCurrency}`);
       const ratesData = await ratesResponse.json();
       const fixedRates = ratesData?.rates || {};
@@ -126,18 +135,47 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
 
       if (tripError) throw tripError;
 
-      const allParts = [
-        { trip_id: tripData.id, name: currentUser.name, color: currentUser.color || 'indigo', mascot: currentUser.mascot || '👤' },
-        ...participants.map(pName => {
-          const sug = suggestions.find(s => s.name === pName);
+      // Map participants to user IDs where possible
+      const allPartData = await Promise.all([
+        // Me
+        { trip_id: tripData.id, name: currentUser.name, user_id: currentUser.id, color: currentUser.color, mascot: currentUser.mascot },
+        // Guests
+        ...participants.map(async pName => {
+          const sug = suggestions.find(s => s.name.toLowerCase() === pName.toLowerCase());
+          let userId = sug?.id;
+          let userColor = sug?.color || colorKeys[Math.floor(Math.random() * colorKeys.length)];
+          let userMascot = sug?.mascot || '👤';
+          
+          if (!userId) {
+            // Check global user table first
+            const { data: match } = await supabase.from('users').select('*').ilike('name', pName).single();
+            if (match) {
+                userId = match.id;
+                userColor = match.color;
+                userMascot = match.mascot;
+            } else {
+                 // Create relevant user profile for that person if it doesn't exist
+                 const { data: newUser, error: createError } = await supabase.from('users').insert([{
+                    name: pName,
+                    mascot: userMascot,
+                    color: userColor
+                }]).select().single();
+
+                if (!createError && newUser) {
+                    userId = newUser.id;
+                }
+            }
+          }
+
           return {
             trip_id: tripData.id,
             name: pName,
-            color: sug?.color || colorKeys[Math.floor(Math.random() * colorKeys.length)],
-            mascot: sug?.mascot || '👤'
+            user_id: userId,
+            color: userColor,
+            mascot: userMascot
           };
         })
-      ];
+      ]);
 
       const currencyInserts = enabledCurrencies.map(c => ({
         trip_id: tripData.id,
@@ -145,7 +183,7 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
       }));
 
       await Promise.all([
-        supabase.from('participants').insert(allParts),
+        supabase.from('participants').insert(allPartData),
         supabase.from('trip_currencies').insert(currencyInserts)
       ]);
 
@@ -208,7 +246,7 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
                       <div className="flex items-center gap-2 font-black text-xs text-slate-900">
                         <Lock size={14} className="text-indigo-600" /> Fixed Rate
                       </div>
-                      <p className="text-[10px] text-slate-400 font-bold leading-tight">Rate stays locked for the whole trip unless you manual refresh.</p>
+                      <p className="text-[10px] text-slate-400 font-bold leading-tight uppercase opacity-50">Stable valuation</p>
                     </button>
                     <button 
                       type="button"
@@ -218,15 +256,9 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
                       <div className="flex items-center gap-2 font-black text-xs text-slate-900">
                         <Zap size={14} className="text-amber-500" /> Real-time
                       </div>
-                      <p className="text-[10px] text-slate-400 font-bold leading-tight">Every expense pulls the market rate for its specific date.</p>
+                      <p className="text-[10px] text-slate-400 font-bold leading-tight uppercase opacity-50">Market precision</p>
                     </button>
                  </div>
-                 {currencyMethod === 'realtime' && (
-                   <div className="flex items-start gap-2 bg-amber-50 p-3 rounded-xl border border-amber-100">
-                      <Info size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                      <p className="text-[10px] font-bold text-amber-700 leading-relaxed uppercase tracking-tight">Note: Base currency cannot be changed after trip starts in Real-time mode.</p>
-                   </div>
-                 )}
               </div>
 
               <div className="space-y-4">
@@ -270,22 +302,22 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
               <div className="space-y-4">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Who's joining?</label>
                 <div className="flex gap-2">
-                  <input type="text" placeholder="Add name..." className="flex-1 px-5 py-4 rounded-2xl border-2 border-slate-200 bg-white focus:border-indigo-500 outline-none text-slate-900 font-bold transition-all shadow-sm" value={tempParticipant} onChange={(e) => setTempParticipant(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddParticipant(tempParticipant))} />
-                  <button type="button" onClick={() => handleAddParticipant(tempParticipant)} className="bg-slate-900 text-white px-6 rounded-2xl hover:bg-slate-800 transition-all"><Plus size={20} /></button>
+                  <input type="text" placeholder="Add unique name" className="flex-1 px-5 py-4 rounded-2xl border-2 border-slate-200 bg-white focus:border-indigo-500 outline-none text-slate-900 font-bold transition-all shadow-sm" value={tempParticipant} onChange={(e) => setTempParticipant(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddParticipant(tempParticipant))} />
+                  <button type="button" onClick={() => handleAddParticipant(tempParticipant)} className="bg-slate-900 text-white px-6 rounded-2xl hover:bg-slate-800 transition-all active:scale-95"><Plus size={20} /></button>
                 </div>
               </div>
               {suggestions.length > 0 && (
                 <div className="space-y-3">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Suggestions</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Suggested Companions</label>
                   <div className="grid grid-cols-2 gap-3">
                     {suggestions.map(s => {
-                      const isAdded = participants.includes(s.name);
+                      const isAdded = participants.some(p => p.toLowerCase() === s.name.toLowerCase());
                       const theme = COLOR_MAP[s.color] || COLOR_MAP.indigo;
                       return (
-                        <button key={s.name} onClick={() => isAdded ? setParticipants(prev => prev.filter(p => p !== s.name)) : handleAddParticipant(s.name)} className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all ${isAdded ? 'border-indigo-600 bg-indigo-50' : 'border-white bg-white hover:border-indigo-100'}`}>
-                          <div className={`w-10 h-10 rounded-xl ${theme.bg} ${theme.text} flex items-center justify-center font-black text-lg`}>{s.mascot}</div>
-                          <span className="font-bold text-slate-700 text-sm truncate">{s.name}</span>
-                          {isAdded && <div className="ml-auto text-indigo-600"><Check size={16} strokeWidth={4} /></div>}
+                        <button key={s.name} onClick={() => isAdded ? setParticipants(prev => prev.filter(p => p.toLowerCase() !== s.name.toLowerCase())) : handleAddParticipant(s.name)} className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all text-left ${isAdded ? 'border-indigo-600 bg-indigo-50' : 'border-white bg-white hover:border-indigo-100 shadow-sm'}`}>
+                          <div className={`shrink-0 w-10 h-10 rounded-xl ${theme.bg} ${theme.text} flex items-center justify-center font-black text-lg shadow-inner`}>{s.mascot}</div>
+                          <span className="font-bold text-slate-700 text-xs truncate flex-1">{s.name}</span>
+                          {isAdded && <div className="text-indigo-600"><Check size={16} strokeWidth={4} /></div>}
                         </button>
                       );
                     })}
@@ -296,13 +328,13 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Trip Roster</label>
                 <div className="space-y-2 min-h-[120px] bg-white p-4 rounded-2xl border-2 border-dashed border-slate-200">
                   <div className="flex items-center gap-3 p-3 bg-slate-50 border border-indigo-100 rounded-xl">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-black">{currentUser.mascot}</div>
-                    <span className="font-bold text-slate-900 text-sm">{currentUser.name} (You)</span>
+                    <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-black shadow-sm">{currentUser.mascot}</div>
+                    <span className="font-bold text-slate-900 text-xs uppercase tracking-tight">{currentUser.name} (Organizer)</span>
                   </div>
                   {participants.map((p, i) => (
                     <div key={i} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl animate-in slide-in-from-right-2">
                       <div className="flex items-center gap-3"><div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-400 flex items-center justify-center font-black"><Users size={16} /></div><span className="font-bold text-slate-700 text-sm">{p}</span></div>
-                      <button type="button" onClick={() => setParticipants(prev => prev.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500"><X size={18} /></button>
+                      <button type="button" onClick={() => setParticipants(prev => prev.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500 p-1"><X size={18} /></button>
                     </div>
                   ))}
                 </div>
@@ -315,7 +347,7 @@ export const AddTripModal: React.FC<AddTripModalProps> = ({
           {step === 1 ? (
              <button onClick={() => name.trim() && setStep(2)} disabled={!name.trim()} className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white py-4 rounded-[1.5rem] font-black text-lg shadow-xl shadow-slate-200 transition-all flex items-center justify-center gap-3 uppercase tracking-widest active:scale-95">Next <ChevronRight size={20} strokeWidth={3} /></button>
           ) : (
-            <button onClick={handleSubmit} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white py-4 rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 transition-all flex items-center justify-center gap-3 uppercase tracking-widest active:scale-95">{loading ? <Loader2 className="animate-spin" size={24} /> : <Check size={24} strokeWidth={3} />} Initiate Trip</button>
+            <button onClick={handleSubmit} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white py-4 rounded-[1.5rem] font-black text-lg shadow-xl shadow-indigo-100 transition-all flex items-center justify-center gap-3 uppercase tracking-widest active:scale-95">{loading ? <Loader2 className="animate-spin" size={24} /> : <Check size={24} strokeWidth={3} />} Create Trip</button>
           )}
         </div>
       </div>

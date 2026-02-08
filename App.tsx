@@ -78,7 +78,7 @@ const App: React.FC = () => {
   const userTheme = currentUser ? getParticipantTheme(currentUser.color) : null;
 
   if (!currentUser) {
-    return <UserSelectionScreen onSelectUser={handleUserSelect} />;
+    return <UserSelectionScreen onSelectUser={handleUserSelect} allCurrencies={globalCurrencies} />;
   }
 
   return (
@@ -124,6 +124,7 @@ const App: React.FC = () => {
             globalRates={ratesMap}
             allAvailableCurrencies={globalCurrencies}
             autoOpenAdd={isNewTripFlow}
+            currentUser={currentUser}
           />
         ) : (
           <TripDashboard 
