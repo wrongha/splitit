@@ -23,6 +23,7 @@ export interface Participant {
 }
 
 export interface UserProfile {
+  id?: string;
   name: string;
   mascot: string;
   color: string;

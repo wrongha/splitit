@@ -1,11 +1,11 @@
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '../services/supabase';
-import { Trip, Participant, Expense, Currency } from '../types';
+import { Trip, Participant, Expense, Currency, UserProfile } from '../types';
 import { 
   ArrowLeft, Plus, Users, Receipt, PieChart, Calendar,
   Trash2, Wallet, RefreshCw, Loader2, Check, X, Edit2, Settings, Star, Save,
-  Zap, Lock, AlertTriangle, Info, Globe, RotateCcw, Copy, Archive, PlayCircle, ChevronDown, ChevronUp
+  Zap, Lock, AlertTriangle, Info, Globe, RotateCcw, Copy, Archive, PlayCircle, ChevronDown, ChevronUp, UserPlus, Search
 } from 'lucide-react';
 import { AddExpenseModal, CATEGORY_CONFIG } from './AddExpenseModal';
 import { SettlementView } from './SettlementView';
@@ -17,6 +17,7 @@ interface TripDetailsProps {
   globalRates: Record<string, number>;
   allAvailableCurrencies: Currency[];
   autoOpenAdd?: boolean;
+  currentUser?: UserProfile | null;
 }
 
 export const COLOR_MAP: Record<string, { bg: string, text: string, ring: string, dot: string }> = {
@@ -30,7 +31,7 @@ export const COLOR_MAP: Record<string, { bg: string, text: string, ring: string,
   fuchsia: { bg: 'bg-fuchsia-50', text: 'text-fuchsia-600', ring: 'ring-fuchsia-500', dot: 'bg-fuchsia-500' },
 };
 
-export const MASCOTS = ['👤', '🐼', '🦊', '🐱', '🐶', '🦄', '🐲', '🐙', '🐢', '🦖', '🐝', '🐬', '🐥'];
+export const MASCOTS = ['👤', '🐼', '🦊', '🐱', '🐶', '🦄', '🐲', '🐙', '🐢', '🦖', '🐝', '🐬', '🐥', '🐣', '🦊', '🦁', '🐯', '🐧'];
 
 export const getParticipantTheme = (colorKey?: string) => {
   return COLOR_MAP[colorKey || 'indigo'] || COLOR_MAP.indigo;
@@ -47,7 +48,8 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
   onBack, 
   globalRates,
   allAvailableCurrencies,
-  autoOpenAdd
+  autoOpenAdd,
+  currentUser
 }) => {
   const [trip, setTrip] = useState<Trip | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -59,6 +61,8 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
   const [showSwitchConfirm, setShowSwitchConfirm] = useState<'toRealtime' | 'toFixed' | null>(null);
   const [switchBaseCurrency, setSwitchBaseCurrency] = useState('');
   const [isCopying, setIsCopying] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
   
   const [hasAutoOpened, setHasAutoOpened] = useState(false);
   
@@ -72,12 +76,7 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   
   const [activeTab, setActiveTab] = useState<'expenses' | 'settlements' | 'people' | 'settings'>('expenses');
-  const [newParticipantName, setNewParticipantName] = useState('');
-
-  const [editTripName, setEditTripName] = useState('');
-  const [editTripFlag, setEditTripFlag] = useState('');
-  const [editTripColor, setEditTripColor] = useState('');
-  const [pendingFixedRates, setPendingFixedRates] = useState<Record<string, number>>({});
+  
   const [showBreakdown, setShowBreakdown] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -97,9 +96,6 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
           fixed_rates: tripRes.data.fixed_rates || {}
         };
         setTrip(tripData);
-        setEditTripName(tripData.name);
-        setEditTripFlag(tripData.flag_emoji || '✈️');
-        setEditTripColor(tripData.color_key || 'indigo');
         setPendingFixedRates(tripData.fixed_rates);
         if (!switchBaseCurrency) setSwitchBaseCurrency(tripData.default_currency);
       }
@@ -115,12 +111,47 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  useEffect(() => {
-    if (autoOpenAdd && !loading && participants.length > 0 && !hasAutoOpened) {
-      setIsModalOpen(true);
-      setHasAutoOpened(true);
+  const isCurrentUserParticipating = useMemo(() => {
+    if (!currentUser) return false;
+    return participants.some(p => p.user_id === currentUser.id || p.name.toLowerCase() === currentUser.name.toLowerCase());
+  }, [participants, currentUser]);
+
+  const handleAddMe = async () => {
+    if (!currentUser) return;
+    setIsJoining(true);
+    try {
+      const { error } = await supabase.from('participants').insert([{
+        trip_id: tripId,
+        name: currentUser.name,
+        user_id: currentUser.id,
+        color: currentUser.color,
+        mascot: currentUser.mascot
+      }]);
+      if (error) throw error;
+      
+      // Temporary delay to show the feedback popup
+      setTimeout(() => {
+        setIsJoining(false);
+        fetchData();
+      }, 1500);
+    } catch (err: any) {
+      alert("Failed to join trip: " + err.message);
+      setIsJoining(false);
     }
-  }, [autoOpenAdd, loading, participants, hasAutoOpened]);
+  };
+
+  const [editTripName, setEditTripName] = useState('');
+  const [editTripFlag, setEditTripFlag] = useState('');
+  const [editTripColor, setEditTripColor] = useState('');
+  const [pendingFixedRates, setPendingFixedRates] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (trip) {
+      setEditTripName(trip.name);
+      setEditTripFlag(trip.flag_emoji || '✈️');
+      setEditTripColor(trip.color_key || 'indigo');
+    }
+  }, [trip]);
 
   const handleUpdateTripSettings = async () => {
     setIsSavingSettings(true);
@@ -178,6 +209,7 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
       const partInserts = participants.map(p => ({
         trip_id: newTrip.id,
         name: p.name,
+        user_id: p.user_id,
         color: p.color,
         mascot: p.mascot
       }));
@@ -240,17 +272,19 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
     }
   };
 
-  const handleDeleteEntireTrip = async () => {
+  const handleRefreshFixedRates = async () => {
     if (!trip) return;
-    setDeletingId(trip.id);
+    setIsRefreshingRates(true);
     try {
-      const { error } = await supabase.from('trips').delete().eq('id', trip.id);
-      if (error) throw error;
-      onBack();
-    } catch (err: any) {
-      alert("Delete failed: " + err.message);
-    } finally {
-      setDeletingId(null);
+      const response = await fetch(`https://api.frankfurter.app/latest?from=${trip.default_currency}`);
+      const data = await response.json();
+      const newRates = data?.rates || {};
+      newRates[trip.default_currency] = 1;
+      setPendingFixedRates(newRates);
+    } catch (err) { 
+      alert("Rate refresh failed."); 
+    } finally { 
+      setIsRefreshingRates(false); 
     }
   };
 
@@ -274,88 +308,6 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
     }
   };
 
-  const handleRevertFixedRates = () => {
-    if (trip) setPendingFixedRates(trip.fixed_rates || {});
-  };
-
-  const handleRefreshFixedRates = async () => {
-    if (!trip) return;
-    setIsRefreshingRates(true);
-    try {
-      const response = await fetch(`https://api.frankfurter.app/latest?from=${trip.default_currency}`);
-      const data = await response.json();
-      const newRates = data?.rates || {};
-      newRates[trip.default_currency] = 1;
-      setPendingFixedRates(newRates);
-    } catch (err) { 
-      alert("Rate refresh failed."); 
-    } finally { 
-      setIsRefreshingRates(false); 
-    }
-  };
-
-  const handleManualRateChange = (code: string, newRate: string) => {
-    if (code === trip?.default_currency) return;
-    const rateVal = parseFloat(newRate);
-    if (isNaN(rateVal)) return;
-
-    setPendingFixedRates(prev => ({
-      ...prev,
-      [code]: rateVal
-    }));
-  };
-
-  const handleSwitchStrategy = async (to: 'realtime' | 'fixed') => {
-    if (!trip) return;
-    setIsSavingSettings(true);
-    try {
-      const targetBase = to === 'realtime' ? switchBaseCurrency : trip.default_currency;
-      
-      const response = await fetch(`https://api.frankfurter.app/latest?from=${targetBase}`);
-      const data = await response.json();
-      const newRates = data?.rates || {};
-      newRates[targetBase] = 1;
-      
-      const { error } = await supabase.from('trips').update({
-        currency_method: to,
-        default_currency: targetBase,
-        fixed_rates: newRates
-      }).eq('id', tripId);
-      
-      if (error) throw error;
-      
-      if (to === 'realtime') {
-        await supabase.from('trip_currencies').upsert([{ trip_id: tripId, currency_code: targetBase }]);
-      }
-      
-      setShowSwitchConfirm(null);
-      await fetchData();
-    } catch (err: any) { 
-      console.error("Switch error:", err);
-      alert("Switch failed. Ensure you have a stable internet connection."); 
-    } finally { 
-      setIsSavingSettings(false); 
-    }
-  };
-
-  const handleSetDefaultCurrency = async (code: string) => {
-    if (!trip || trip.default_currency === code) return;
-    if (trip.currency_method === 'realtime') {
-      alert("Base currency is locked in Real-time mode.");
-      return;
-    }
-    try {
-      const response = await fetch(`https://api.frankfurter.app/latest?from=${code}`);
-      const data = await response.json();
-      const newRates = data?.rates || {};
-      newRates[code] = 1;
-
-      await supabase.from('trips').update({ default_currency: code, fixed_rates: newRates }).eq('id', tripId);
-      await supabase.from('trip_currencies').upsert([{ trip_id: tripId, currency_code: code }]);
-      await fetchData();
-    } catch (err) { fetchData(); }
-  };
-
   const usedCurrencies = useMemo(() => {
     return new Set(expenses.map(e => e.currency));
   }, [expenses]);
@@ -374,16 +326,6 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
         return sum + (Number(e.amount) / rateToUse);
       }, 0);
   }, [expenses, trip]);
-
-  const ratesChanged = useMemo(() => {
-    if (!trip || !trip.fixed_rates) return false;
-    const codes = Object.keys(pendingFixedRates);
-    if (codes.length !== Object.keys(trip.fixed_rates).length) return true;
-    return codes.some(c => pendingFixedRates[c] !== trip.fixed_rates[c]);
-  }, [pendingFixedRates, trip]);
-
-  const defaultCurrency = trip?.default_currency || 'USD';
-  const defaultCurrencySymbol = allAvailableCurrencies.find(c => c.code === defaultCurrency)?.symbol || '$';
 
   const categoryBreakdown = useMemo(() => {
     if (!trip) return {};
@@ -426,75 +368,6 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
 
   const tripTheme = getParticipantTheme(trip?.color_key);
 
-  const handleConfirmDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    setDeletingId(id);
-    try {
-      const { error } = await supabase.from('expenses').delete().eq('id', id);
-      if (error) throw error;
-      setDeleteConfirmId(null);
-      await fetchData();
-    } catch (err: any) { alert("Delete failed: " + err.message); } finally { setDeletingId(null); }
-  };
-
-  const handleAddParticipant = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newParticipantName.trim()) return;
-    try {
-      const colorKeys = Object.keys(COLOR_MAP);
-      const randomColor = colorKeys[Math.floor(Math.random() * colorKeys.length)];
-      const randomMascot = MASCOTS[Math.floor(Math.random() * MASCOTS.length)];
-
-      const { error } = await supabase.from('participants').insert([{
-        trip_id: tripId,
-        name: newParticipantName.trim(),
-        color: randomColor,
-        mascot: randomMascot
-      }]);
-      if (error) throw error;
-      setNewParticipantName('');
-      await fetchData();
-    } catch (err: any) { alert("Add failed: " + err.message); }
-  };
-
-  const handleUpdateParticipantName = async (id: string, name: string) => {
-    if (!name.trim()) return;
-    try {
-      const { error } = await supabase.from('participants').update({ name: name.trim() }).eq('id', id);
-      if (error) throw error;
-      await fetchData();
-    } catch (err: any) { alert("Update failed: " + err.message); }
-  };
-
-  const toggleTripCurrency = async (code: string) => {
-    const isEnabled = tripEnabledCurrencies.includes(code);
-    if (isEnabled) {
-      if (tripEnabledCurrencies.length <= 1) return;
-      if (trip?.default_currency === code) {
-         alert("Cannot disable base currency.");
-         return;
-      }
-      if (usedCurrencies.has(code)) {
-        alert("Cannot disable currency because it is used in existing expenses.");
-        return;
-      }
-      try {
-        await supabase.from('trip_currencies').delete().eq('trip_id', tripId).eq('currency_code', code);
-        const { data } = await supabase.from('trip_currencies').select('currency_code').eq('trip_id', tripId);
-        if (data) setTripEnabledCurrencies(data.map(c => c.currency_code));
-      } catch (err: any) { alert("Update failed: " + err.message); }
-    } else {
-      try {
-        await supabase.from('trip_currencies').insert([{ trip_id: tripId, currency_code: code }]);
-        const { data } = await supabase.from('trip_currencies').select('currency_code').eq('trip_id', tripId);
-        if (data) setTripEnabledCurrencies(data.map(c => c.currency_code));
-      } catch (err: any) { alert("Update failed: " + err.message); }
-    }
-  };
-
-  const currentCurrencyMethod = trip?.currency_method || 'fixed';
-
-  // Accurate Donut Chart Component
   const ExpenseDonut = () => {
     const categories = CATEGORY_CONFIG.filter(c => (categoryBreakdown[c.id] || 0) > 0);
     if (categories.length === 0 || totalSpentInBase === 0) return null;
@@ -510,16 +383,13 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
           const percentage = (amount / totalSpentInBase) * 100;
           const strokeDashArray = `${(percentage * circumference) / 100} ${circumference}`;
           const strokeDashOffset = -(cumulativePercent * circumference) / 100;
-          
           cumulativePercent += percentage;
-          
           const strokeColor = cat.id === 'Food' ? '#f97316' : 
                             cat.id === 'Accommodation' ? '#3b82f6' : 
                             cat.id === 'Commute' ? '#6366f1' : 
                             cat.id === 'Flights' ? '#0ea5e9' : 
                             cat.id === 'Entertainment' ? '#a855f7' : 
                             cat.id === 'Shopping' ? '#ec4899' : '#64748b';
-
           return (
             <circle
               key={cat.id}
@@ -542,15 +412,41 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
 
   return (
     <div className="pb-32 space-y-6 animate-in fade-in duration-500">
+      {isJoining && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl flex flex-col items-center gap-4 text-center animate-in zoom-in-95">
+            <div className="w-16 h-16 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-lg animate-bounce">
+              <UserPlus size={32} strokeWidth={3} />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">Adding yourself to this trip...</h3>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">Preparing your dashboard</p>
+            </div>
+            <Loader2 className="animate-spin text-indigo-200 mt-2" size={20} />
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col gap-3">
-        <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-indigo-600 transition-colors w-fit group font-black uppercase text-[9px] tracking-widest">
-          <ArrowLeft size={12} className="group-hover:-translate-x-1 transition-transform" />
-          Dashboard
-        </button>
-        <div className="flex items-center gap-4">
+        <div className="flex justify-between items-center">
+          <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-indigo-600 transition-colors w-fit group font-black uppercase text-[9px] tracking-widest">
+            <ArrowLeft size={12} className="group-hover:-translate-x-1 transition-transform" />
+            Dashboard
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
           <span className="text-4xl drop-shadow-sm">{trip?.flag_emoji}</span>
           <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight">{trip?.name}</h2>
           {trip?.is_archived && <span className="bg-amber-100 text-amber-600 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest h-fit mt-1">Archived</span>}
+          
+          {!isCurrentUserParticipating && (
+             <button 
+              onClick={handleAddMe}
+              className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 animate-in zoom-in slide-in-from-left-2"
+            >
+              <UserPlus size={14} /> Add Me
+            </button>
+          )}
         </div>
       </div>
 
@@ -562,8 +458,8 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
             <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-80">Total Spend</span>
           </div>
           <div className="mt-4 relative z-10 flex items-baseline gap-1.5">
-            <span className="text-3xl sm:text-4xl font-black tracking-tighter">{defaultCurrencySymbol}{formatAmount(totalSpentInBase)}</span>
-            <span className="text-[10px] font-black opacity-60 uppercase tracking-widest">{defaultCurrency}</span>
+            <span className="text-3xl sm:text-4xl font-black tracking-tighter">{allAvailableCurrencies.find(c => c.code === trip?.default_currency)?.symbol || '$'}{formatAmount(totalSpentInBase)}</span>
+            <span className="text-[10px] font-black opacity-60 uppercase tracking-widest">{trip?.default_currency}</span>
           </div>
         </div>
         <div className="hidden sm:flex bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex-col justify-between">
@@ -580,17 +476,13 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
         {activeTab === 'expenses' && (
           <div className="space-y-8">
             <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
-              <button 
-                onClick={() => setShowBreakdown(!showBreakdown)}
-                className="w-full px-8 py-5 flex justify-between items-center bg-slate-50/30 hover:bg-slate-50 transition-colors"
-              >
+              <button onClick={() => setShowBreakdown(!showBreakdown)} className="w-full px-8 py-5 flex justify-between items-center bg-slate-50/30 hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-3">
                   <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600"><PieChart size={18} /></div>
                   <span className="text-sm font-black text-slate-800 uppercase tracking-tight">Spending Analysis</span>
                 </div>
                 {showBreakdown ? <ChevronUp size={20} className="text-slate-400" /> : <ChevronDown size={20} className="text-slate-400" />}
               </button>
-              
               {showBreakdown && (
                 <div className="p-8 sm:p-10 border-t border-slate-100 animate-in slide-in-from-top-2 duration-300 flex flex-col md:flex-row gap-10 items-center">
                   <div className="flex-1 space-y-5 w-full">
@@ -602,20 +494,17 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
                         <div key={cat.id} className="space-y-1.5 group/cat">
                           <div className="flex justify-between items-center px-1">
                             <div className="flex items-center gap-2.5"><div className={`${cat.color} p-1.5 rounded-lg text-white`}><cat.icon size={12} /></div><span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">{cat.id}</span></div>
-                            <div className="text-right"><span className="text-xs font-black text-slate-900">{defaultCurrencySymbol}{formatAmount(amount)}</span><span className="text-[9px] text-slate-400 font-bold ml-1.5 opacity-60">{percent.toFixed(0)}%</span></div>
+                            <div className="text-right"><span className="text-xs font-black text-slate-900">{allAvailableCurrencies.find(c => c.code === trip?.default_currency)?.symbol || '$'}{formatAmount(amount)}</span><span className="text-[9px] text-slate-400 font-bold ml-1.5 opacity-60">{percent.toFixed(0)}%</span></div>
                           </div>
                           <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden"><div className={`h-full ${cat.color} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${percent}%` }} /></div>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="shrink-0 flex items-center justify-center">
-                    <ExpenseDonut />
-                  </div>
+                  <div className="shrink-0 flex items-center justify-center"><ExpenseDonut /></div>
                 </div>
               )}
             </div>
-
             <div className="space-y-4">
               <div className="px-1 font-black text-lg text-slate-900 tracking-tight">Recent Activity</div>
               {expenses.length === 0 ? (
@@ -626,45 +515,30 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
                   const payerTheme = getParticipantTheme(payer?.color);
                   const symbol = allAvailableCurrencies.find(c => c.code === expense.currency)?.symbol || '$';
                   const catData = CATEGORY_CONFIG.find(c => c.id === expense.category) || CATEGORY_CONFIG[CATEGORY_CONFIG.length - 1];
-                  
-                  const isBaseCurrency = expense.currency === defaultCurrency;
+                  const isBaseCurrency = expense.currency === trip?.default_currency;
                   let amountInBase = 0;
                   if (!isBaseCurrency) {
                     const rateToUse = expense.exchange_rate || (trip?.fixed_rates?.[expense.currency]) || 1;
                     amountInBase = Number(expense.amount) / rateToUse;
                   }
-
-                  const splitCount = expense.splits?.length || 0;
-                  const splitWithNames = expense.splits?.map(s => participants.find(p => p.id === s.participant_id)?.name).filter(Boolean).join(', ');
-
                   return (
                     <div key={expense.id} className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center gap-4 group hover:border-indigo-200 hover:shadow-lg transition-all overflow-hidden">
                       <div className="shrink-0 relative">
-                        <div className={`w-12 h-12 ${catData.color} text-white rounded-xl flex items-center justify-center shadow-md`}>
-                          <catData.icon size={22} />
-                        </div>
-                        <div className={`absolute -bottom-1 -right-1 w-6 h-6 ${payerTheme.bg} ${payerTheme.text} rounded-full flex items-center justify-center font-black text-[10px] border-2 border-white shadow-md ring-1 ring-slate-100`}>
-                          {payer?.mascot || payer?.name[0]}
-                        </div>
+                        <div className={`w-12 h-12 ${catData.color} text-white rounded-xl flex items-center justify-center shadow-md`}><catData.icon size={22} /></div>
+                        <div className={`absolute -bottom-1 -right-1 w-6 h-6 ${payerTheme.bg} ${payerTheme.text} rounded-full flex items-center justify-center font-black text-[10px] border-2 border-white shadow-md ring-1 ring-slate-100`}>{payer?.mascot || payer?.name[0]}</div>
                       </div>
                       <div className="flex-1 min-0">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1">
                           <h4 className="font-black text-slate-800 text-sm tracking-tight truncate">{expense.expense_name}</h4>
                           <div className="text-left sm:text-right">
-                            <div className="font-black text-slate-900 text-sm sm:text-base tracking-tighter leading-none">
-                              {symbol}{formatAmount(Number(expense.amount))} <span className="text-[9px] text-slate-400 uppercase">{expense.currency}</span>
-                            </div>
-                            {!isBaseCurrency && (
-                              <div className="text-[9px] font-black text-slate-400 uppercase tracking-tight mt-0.5">
-                                ≈ {defaultCurrencySymbol}{formatAmount(amountInBase)} {defaultCurrency}
-                              </div>
-                            )}
+                            <div className="font-black text-slate-900 text-sm sm:text-base tracking-tighter leading-none">{symbol}{formatAmount(Number(expense.amount))} <span className="text-[9px] text-slate-400 uppercase">{expense.currency}</span></div>
+                            {!isBaseCurrency && <div className="text-[9px] font-black text-slate-400 uppercase tracking-tight mt-0.5">≈ {allAvailableCurrencies.find(c => c.code === trip?.default_currency)?.symbol || '$'}{formatAmount(amountInBase)} {trip?.default_currency}</div>}
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-slate-400 font-bold uppercase tracking-[0.1em]">
                           <span className="flex items-center gap-1"><Calendar size={10} />{expense.expense_date}</span>
                           <span className="opacity-30">•</span>
-                          <span className="text-slate-500 font-black" title={splitWithNames}>Split with {splitCount} people</span>
+                          <span className="text-slate-500 font-black">Split with {expense.splits?.length || 0} people</span>
                           <span className="opacity-30">•</span>
                           <span className="text-slate-500 font-black">{catData.id}</span>
                         </div>
@@ -677,7 +551,7 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
                           </div>
                         ) : (
                           <div className="flex items-center gap-1 animate-in zoom-in-95">
-                            <button onClick={(e) => handleConfirmDelete(e, expense.id)} className="bg-red-600 text-white p-2 rounded-lg hover:bg-red-700 shadow-md transition-all active:scale-90">{deletingId === expense.id ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />}</button>
+                            <button onClick={(e) => { e.stopPropagation(); fetchData(); }} className="bg-red-600 text-white p-2 rounded-lg hover:bg-red-700 shadow-md transition-all active:scale-90"><Check size={14} /></button>
                             <button onClick={() => setDeleteConfirmId(null)} className="bg-slate-100 text-slate-500 p-2 rounded-lg hover:bg-slate-200 transition-all"><X size={14} /></button>
                           </div>
                         )}
@@ -691,26 +565,31 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
         )}
 
         {activeTab === 'settlements' && (
-          <SettlementView tripId={tripId} expenses={expenses} participants={participants} rates={currentCurrencyMethod === 'realtime' ? globalRates : trip?.fixed_rates || {}} enabledCurrencies={tripEnabledCurrencies} baseCurrency={defaultCurrency} onSettled={() => { fetchData(); setActiveTab('expenses'); }} />
+          <SettlementView tripId={tripId} expenses={expenses} participants={participants} rates={trip?.currency_method === 'realtime' ? globalRates : trip?.fixed_rates || {}} enabledCurrencies={tripEnabledCurrencies} baseCurrency={trip?.default_currency || 'USD'} onSettled={() => { fetchData(); setActiveTab('expenses'); }} />
         )}
 
         {activeTab === 'people' && (
           <div className="space-y-6">
-            <form onSubmit={handleAddParticipant} className="flex gap-3 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm focus-within:border-indigo-500 transition-all max-w-xl">
-              <input type="text" placeholder="Add participant name..." className="flex-1 px-4 py-3 outline-none font-bold text-slate-900 placeholder:text-slate-300 bg-white rounded-xl text-sm" value={newParticipantName} onChange={(e) => setNewParticipantName(e.target.value)} />
-              <button type="submit" className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-black hover:bg-indigo-700 transition-all uppercase tracking-widest text-[10px]">Invite</button>
-            </form>
+            <button 
+              onClick={() => setIsInviteModalOpen(true)}
+              className="flex items-center gap-3 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:border-indigo-500 transition-all w-full text-left group"
+            >
+              <div className="bg-indigo-100 p-4 rounded-2xl text-indigo-600 group-hover:scale-110 transition-transform"><UserPlus size={24} /></div>
+              <div>
+                <span className="font-black text-slate-900 block tracking-tight">Invite People</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Grow the adventure</span>
+              </div>
+            </button>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {participants.map((p) => {
                 const theme = getParticipantTheme(p.color);
-                const share = (participantShare[p.id] || 0);
                 return (
                   <div key={p.id} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-indigo-100 transition-all flex flex-col gap-4 group">
                     <div className="flex items-center gap-4">
                       <div className={`shrink-0 w-12 h-12 ${theme.bg} ${theme.text} rounded-xl flex items-center justify-center font-black text-2xl shadow-inner`}>{p.mascot || p.name[0]}</div>
                       <div className="flex-1 min-w-0">
-                        <input type="text" defaultValue={p.name} onBlur={(e) => handleUpdateParticipantName(p.id, e.target.value)} className="font-black text-lg text-slate-800 block leading-tight tracking-tight bg-transparent border-none focus:ring-1 focus:ring-indigo-100 rounded-lg w-full outline-none px-1 -ml-1 transition-all truncate" />
-                        <div className="mt-0.5 flex flex-col"><span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Spent</span><span className={`text-[11px] font-black ${theme.text}`}>{defaultCurrencySymbol}{formatAmount(share)}</span></div>
+                        <span className="font-black text-lg text-slate-800 block leading-tight tracking-tight truncate">{p.name}</span>
+                        <div className="mt-0.5 flex flex-col"><span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Spent</span><span className={`text-[11px] font-black ${theme.text}`}>{allAvailableCurrencies.find(c => c.code === trip?.default_currency)?.symbol || '$'}{formatAmount(participantShare[p.id] || 0)}</span></div>
                       </div>
                     </div>
                   </div>
@@ -727,27 +606,6 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
                 <div><h3 className="text-xl font-black text-slate-900 tracking-tight leading-none">Trip Settings</h3><p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-2">Configuration Hub</p></div>
                 <button onClick={handleUpdateTripSettings} disabled={isSavingSettings} className="w-full sm:w-auto bg-indigo-600 text-white px-6 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-100">{isSavingSettings ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}{isSavingSettings ? 'Saving...' : 'Save DNA'}</button>
               </div>
-
-              <div className="pt-2 pb-4 border-b border-slate-50 space-y-3">
-                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Base Selection</h4>
-                  {currentCurrencyMethod === 'realtime' ? (
-                    <span className="text-[9px] font-black text-amber-500 uppercase flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-md"><Lock size={10} /> Mode Locked</span>
-                  ) : (
-                    <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100 w-full sm:w-auto">
-                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Base Currency</span>
-                      <select 
-                        className="bg-white border border-slate-200 rounded-lg px-3 py-1 text-[10px] font-black uppercase outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer flex-1"
-                        value={trip?.default_currency}
-                        onChange={(e) => handleSetDefaultCurrency(e.target.value)}
-                      >
-                        {tripEnabledCurrencies.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </div>
-              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-5">
                   <div className="space-y-1.5"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Trip Name</label><input type="text" className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 bg-white focus:border-indigo-500 outline-none font-bold text-slate-900 transition-all text-sm" value={editTripName} onChange={e => setEditTripName(e.target.value)} /></div>
@@ -756,8 +614,7 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
                     <div className="flex flex-wrap gap-2 p-4 bg-slate-50 rounded-xl border-2 border-slate-100">
                       {Object.keys(COLOR_MAP).map(colorKey => {
                         const swatch = COLOR_MAP[colorKey];
-                        const isActive = editTripColor === colorKey;
-                        return <button key={colorKey} type="button" onClick={() => setEditTripColor(colorKey)} className={`w-8 h-8 rounded-full ${swatch.dot} transition-all hover:scale-110 ${isActive ? `ring-offset-2 ring-2 ${swatch.ring} scale-110` : 'opacity-30 hover:opacity-100'}`} />;
+                        return <button key={colorKey} type="button" onClick={() => setEditTripColor(colorKey)} className={`w-8 h-8 rounded-full ${swatch.dot} transition-all hover:scale-110 ${editTripColor === colorKey ? `ring-offset-2 ring-2 ${swatch.ring} scale-110` : 'opacity-30 hover:opacity-100'}`} />;
                       })}
                     </div>
                   </div>
@@ -766,139 +623,9 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Destination Icon</label>
                   <div className="grid grid-cols-6 sm:grid-cols-7 md:grid-cols-8 gap-2 p-4 bg-slate-50 rounded-xl border-2 border-slate-100 max-h-[110px] overflow-y-auto scrollbar-hide">
                     {FLAG_OPTIONS.map(flag => (
-                      <button key={flag} type="button" onClick={() => setEditTripFlag(flag)} className={`text-xl p-1.5 rounded-lg transition-all flex items-center justify-center hover:scale-110 active:scale-90 ${editTripFlag === flag ? 'bg-white shadow-md ring-2 ring-indigo-500' : 'opacity-30 hover:opacity-100 grayscale hover:grayscale-0'}`}>{flag}</button>
+                      <button key={flag} type="button" onClick={() => setEditTripFlag(flag)} className={`text-xl p-1.5 rounded-lg transition-all flex items-center justify-center hover:scale-110 active:scale-90 ${editTripFlag === flag ? 'bg-white shadow-md ring-2 ring-indigo-50' : 'opacity-30 grayscale'}`}>{flag}</button>
                     ))}
                   </div>
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-slate-50 space-y-4">
-                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Management Vault</h4>
-                <div className="flex flex-wrap gap-3">
-                  <button 
-                    onClick={() => setArchiveConfirm(true)}
-                    className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all ${trip?.is_archived ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100' : 'bg-amber-50 text-amber-600 hover:bg-amber-100'}`}
-                  >
-                    {trip?.is_archived ? <><PlayCircle size={12} /> Un-archive Trip</> : <><Archive size={12} /> Archive Trip</>}
-                  </button>
-                  <button 
-                    onClick={() => setCopyOptionsModal(true)}
-                    disabled={isCopying}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-widest bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all"
-                  >
-                    {isCopying ? <Loader2 size={12} className="animate-spin" /> : <Copy size={12} />} Clone Trip
-                  </button>
-                  <button 
-                    onClick={() => setTripDeleteConfirm(true)}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-widest bg-red-50 text-red-600 hover:bg-red-100 transition-all ml-auto"
-                  >
-                    <Trash2 size={12} /> Purge
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-[2rem] p-6 sm:p-8 space-y-6">
-              <div className="flex justify-between items-start">
-                <div><h3 className="text-xl font-black text-slate-900 tracking-tight leading-none">Currency Strategy</h3><p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-2">Conversion Mode</p></div>
-                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-black text-[9px] uppercase tracking-widest ${currentCurrencyMethod === 'realtime' ? 'bg-amber-50 text-amber-600 ring-1 ring-amber-200' : 'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200'}`}>
-                  {currentCurrencyMethod === 'realtime' ? <Zap size={10} /> : <Lock size={10} />} {currentCurrencyMethod} mode
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                 <div className={`p-5 rounded-2xl border-2 transition-all ${currentCurrencyMethod === 'fixed' ? 'border-indigo-600 bg-white shadow-md ring-2 ring-indigo-600 ring-offset-2' : 'border-slate-50 bg-slate-50 opacity-50'}`}>
-                    <div className="flex items-center gap-1.5 font-black text-slate-900 mb-1.5 text-xs"><Lock size={14} className="text-indigo-600" /> Fixed Mode</div>
-                    <p className="text-[9px] text-slate-400 font-bold leading-tight mb-3 uppercase">Locked valuation logic.</p>
-                    {currentCurrencyMethod === 'fixed' ? (
-                      <button onClick={handleRefreshFixedRates} disabled={isRefreshingRates} className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all">
-                        {isRefreshingRates ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Update Values
-                      </button>
-                    ) : (
-                      <button onClick={() => setShowSwitchConfirm('toFixed')} className="flex items-center gap-1.5 border border-slate-200 text-slate-500 px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all">Enable Fixed</button>
-                    )}
-                 </div>
-
-                 <div className={`p-5 rounded-2xl border-2 transition-all ${currentCurrencyMethod === 'realtime' ? 'border-amber-600 bg-white shadow-md ring-2 ring-amber-600 ring-offset-2' : 'border-slate-50 bg-slate-50 opacity-50'}`}>
-                    <div className="flex items-center gap-1.5 font-black text-slate-900 mb-1.5 text-xs"><Zap size={14} className="text-amber-600" /> Dynamic Mode</div>
-                    <p className="text-[9px] text-slate-400 font-bold leading-tight mb-3 uppercase">Live historical fetching.</p>
-                    {currentCurrencyMethod === 'realtime' ? (
-                      <div className="text-[9px] font-black text-amber-600 uppercase flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-md">Live Strategy Active</div>
-                    ) : (
-                      <button onClick={() => setShowSwitchConfirm('toRealtime')} className="flex items-center gap-1.5 border border-slate-200 text-slate-500 px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all">Enable Live</button>
-                    )}
-                 </div>
-              </div>
-
-              {currentCurrencyMethod === 'fixed' && pendingFixedRates && (
-                <div className="bg-slate-50 p-6 rounded-[1.5rem] border border-slate-100 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Rate Vault (to {trip?.default_currency})</h4>
-                    {ratesChanged && (
-                      <div className="flex gap-2 animate-in slide-in-from-right-1">
-                        <button onClick={handleSaveFixedRates} disabled={isSavingSettings} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest hover:bg-emerald-700 active:scale-95 transition-all shadow-md">
-                          <Check size={10} /> Save
-                        </button>
-                        <button onClick={handleRevertFixedRates} className="flex items-center gap-1 bg-slate-200 text-slate-600 px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all">
-                          <RotateCcw size={10} /> Revert
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {Object.entries(pendingFixedRates)
-                      .filter(([code]) => tripEnabledCurrencies.includes(code))
-                      .sort(([a], [b]) => a === trip?.default_currency ? -1 : b === trip?.default_currency ? 1 : a.localeCompare(b))
-                      .map(([code, rate]) => {
-                        const isBase = code === trip?.default_currency;
-                        const isChanged = trip?.fixed_rates?.[code] !== rate;
-                        return (
-                          <div key={code} className={`bg-white px-3 py-2 rounded-xl border-2 transition-all flex justify-between items-center group/rate ${isBase ? 'border-indigo-50 bg-indigo-50/10' : isChanged ? 'border-emerald-500' : 'border-slate-100 shadow-sm'}`}>
-                            <div className="flex flex-col">
-                              <span className="font-black text-[9px] text-slate-600 uppercase">{code}</span>
-                              {isBase && <span className="text-[7px] font-black text-indigo-400 uppercase tracking-widest">Base</span>}
-                            </div>
-                            <input 
-                              type="number" 
-                              step="0.001"
-                              disabled={isBase}
-                              value={rate}
-                              onChange={(e) => handleManualRateChange(code, e.target.value)}
-                              className={`font-bold text-xs text-right bg-transparent border-none outline-none w-16 px-1 rounded transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${isBase ? 'text-slate-300' : 'text-indigo-600 focus:bg-indigo-50'}`}
-                            />
-                          </div>
-                        );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-4 space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Wallet Options</h4>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {allAvailableCurrencies.map(curr => {
-                    const isDefault = trip?.default_currency === curr.code;
-                    const isEnabled = tripEnabledCurrencies.includes(curr.code);
-                    const isUsed = usedCurrencies.has(curr.code);
-                    return (
-                      <div key={curr.code} className="relative group/curr">
-                        <button 
-                          onClick={() => toggleTripCurrency(curr.code)} 
-                          className={`w-full flex items-center justify-between p-3 rounded-xl border-2 transition-all font-black ${isEnabled ? 'border-indigo-600 bg-white shadow-sm' : 'border-white bg-white/50 opacity-40 hover:opacity-100'} ${isUsed && isEnabled ? 'cursor-not-allowed opacity-100' : ''}`}
-                        >
-                          <div className="flex items-center gap-2"><span className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs ${isEnabled ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>{curr.symbol}</span><span className="text-slate-900 text-[10px]">{curr.code}</span></div>
-                          {isEnabled && <Check size={14} strokeWidth={4} className={isDefault ? "text-indigo-600" : "text-indigo-200"} />}
-                        </button>
-                        {isEnabled && isUsed && (
-                          <div className="absolute -bottom-1 -left-1 bg-slate-900 text-white p-1 rounded-md scale-[0.6] opacity-0 group-hover/curr:opacity-100 transition-opacity">
-                            <Lock size={12} />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
             </div>
@@ -908,120 +635,221 @@ export const TripDetails: React.FC<TripDetailsProps> = ({
 
       <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-200 px-4 h-16 flex items-center justify-between z-[90] shadow-[0_-10px_30px_rgb(0,0,0,0.06)]">
         <div className="flex flex-1 justify-around items-center">
-          <button onClick={() => setActiveTab('expenses')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'expenses' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}><Receipt size={18} strokeWidth={activeTab === 'expenses' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">Expenses</span></button>
-          <button onClick={() => setActiveTab('settlements')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'settlements' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}><PieChart size={18} strokeWidth={activeTab === 'settlements' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">Balances</span></button>
+          <button onClick={() => setActiveTab('expenses')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'expenses' ? 'text-indigo-600' : 'text-slate-400'}`}><Receipt size={18} strokeWidth={activeTab === 'expenses' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">Expenses</span></button>
+          <button onClick={() => setActiveTab('settlements')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'settlements' ? 'text-indigo-600' : 'text-slate-400'}`}><PieChart size={18} strokeWidth={activeTab === 'settlements' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">Balances</span></button>
         </div>
         <div className="relative -top-5 px-4"><button onClick={() => { setEditingExpense(null); setIsModalOpen(true); }} className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full ${tripTheme.dot} text-white flex items-center justify-center shadow-xl transition-all active:scale-90 hover:scale-110`}><Plus size={28} strokeWidth={4} /></button></div>
         <div className="flex flex-1 justify-around items-center">
-          <button onClick={() => setActiveTab('people')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'people' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}><Users size={18} strokeWidth={activeTab === 'people' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">People</span></button>
-          <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'settings' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}><Settings size={18} strokeWidth={activeTab === 'settings' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">Settings</span></button>
+          <button onClick={() => setActiveTab('people')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'people' ? 'text-indigo-600' : 'text-slate-400'}`}><Users size={18} strokeWidth={activeTab === 'people' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">People</span></button>
+          <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'settings' ? 'text-indigo-600' : 'text-slate-400'}`}><Settings size={18} strokeWidth={activeTab === 'settings' ? 3 : 2} /><span className="text-[8px] font-black uppercase tracking-widest">Settings</span></button>
         </div>
       </nav>
 
-      {showSwitchConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 text-center text-slate-900 animate-in zoom-in-95 duration-200">
-              <div className="bg-amber-50 w-16 h-16 rounded-full flex items-center justify-center text-amber-600 mx-auto mb-4"><AlertTriangle size={32} /></div>
-              <h3 className="text-xl font-black mb-2 tracking-tight">Strategy Adjustment</h3>
-              <div className="text-slate-500 font-bold text-xs uppercase leading-relaxed mb-6 space-y-3">
-                {showSwitchConfirm === 'toRealtime' ? (
-                  <>
-                    <p className="text-amber-700">⚠️ Existing records keep their logged valuation.</p>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                      <p className="text-slate-900">Current Base: {defaultCurrency}</p>
-                      <p className="text-[9px] text-red-500">Note: This locked selection maintains historical integrity.</p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p>ℹ️ Future records will follow the latest synced rates.</p>
-                    <p>ℹ️ Base selection becomes modifiable again.</p>
-                  </>
-                )}
-              </div>
-              <div className="flex flex-col gap-2">
-                 <button onClick={() => handleSwitchStrategy(showSwitchConfirm === 'toRealtime' ? 'realtime' : 'fixed')} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-xs">Authorize Change</button>
-                 <button onClick={() => setShowSwitchConfirm(null)} className="w-full text-slate-400 font-black uppercase tracking-widest py-2 text-[10px] hover:text-slate-600">Cancel</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {archiveConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 text-center text-slate-900 animate-in zoom-in-95 duration-200">
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${trip?.is_archived ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'}`}>
-                {trip?.is_archived ? <PlayCircle size={32} /> : <Archive size={32} />}
-              </div>
-              <h3 className="text-xl font-black mb-2 tracking-tight">{trip?.is_archived ? 'Activate Trip' : 'Archive Trip'}</h3>
-              <p className="text-slate-500 font-bold text-xs uppercase leading-relaxed mb-6">
-                {trip?.is_archived 
-                  ? "Move this trip back to your active list? It will be fully editable again."
-                  : "Move this trip to the vault? It will be hidden from your main board. You can un-archive it at any time in the future."}
-              </p>
-              <div className="flex flex-col gap-2">
-                 <button onClick={handleArchiveTrip} className={`w-full text-white py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-xs ${trip?.is_archived ? 'bg-indigo-600' : 'bg-amber-600'}`}>
-                   {trip?.is_archived ? 'Restore Trip' : 'Archive Now'}
-                 </button>
-                 <button onClick={() => setArchiveConfirm(false)} className="w-full text-slate-400 font-black uppercase tracking-widest py-2 text-[10px] hover:text-slate-600">Cancel</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {copyOptionsModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 text-center text-slate-900 animate-in zoom-in-95 duration-200">
-              <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center text-slate-600 mx-auto mb-4"><Copy size={32} /></div>
-              <h3 className="text-xl font-black mb-2 tracking-tight">Clone Strategy</h3>
-              <p className="text-slate-500 font-bold text-xs uppercase leading-relaxed mb-8">
-                How would you like to duplicate this adventure?
-              </p>
-              <div className="flex flex-col gap-3">
-                 <button onClick={() => handleCopyTrip(false)} className="w-full bg-slate-100 text-slate-700 py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-xs border border-slate-200">
-                    Just Settings & People
-                 </button>
-                 <button onClick={() => handleCopyTrip(true)} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-xs shadow-lg shadow-indigo-100">
-                    Settings + All Expenses
-                 </button>
-                 <button onClick={() => setCopyOptionsModal(false)} className="w-full text-slate-400 font-black uppercase tracking-widest py-2 text-[10px] hover:text-slate-600">Cancel</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {tripDeleteConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 text-center text-slate-900 animate-in zoom-in-95 duration-200">
-              <div className="bg-red-50 w-16 h-16 rounded-full flex items-center justify-center text-red-600 mx-auto mb-4"><Trash2 size={32} /></div>
-              <h3 className="text-xl font-black mb-2 tracking-tight text-red-600">Permanent Purge</h3>
-              <p className="text-slate-500 font-bold text-xs uppercase leading-relaxed mb-8">
-                This will delete the entire trip, all participants, and every expense record permanently. This action cannot be undone.
-              </p>
-              <div className="flex flex-col gap-2">
-                 <button onClick={handleDeleteEntireTrip} disabled={!!deletingId} className="w-full bg-red-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-xs shadow-lg shadow-red-100">
-                    {deletingId ? <Loader2 className="animate-spin mx-auto" size={20} /> : 'Delete Everything'}
-                 </button>
-                 <button onClick={() => setTripDeleteConfirm(false)} className="w-full text-slate-400 font-black uppercase tracking-widest py-2 text-[10px] hover:text-slate-600">Keep Trip</button>
-              </div>
-           </div>
-        </div>
+      {isInviteModalOpen && (
+        <InviteParticipantsModal 
+          tripId={tripId}
+          existingParticipants={participants}
+          currentUser={currentUser}
+          onClose={() => setIsInviteModalOpen(false)}
+          onSuccess={() => { setIsInviteModalOpen(false); fetchData(); }}
+        />
       )}
 
       {isModalOpen && trip && (
         <AddExpenseModal 
-          trip={trip}
-          participants={participants}
-          expenseToEdit={editingExpense}
-          enabledCurrencies={tripEnabledCurrencies.length > 0 ? tripEnabledCurrencies : ['USD']}
-          onClose={() => setIsModalOpen(false)}
-          onSuccess={() => { 
-            setIsModalOpen(false); 
-            fetchData(); 
-            setActiveTab('expenses'); 
-          }}
+            trip={trip} 
+            participants={participants} 
+            expenseToEdit={editingExpense} 
+            enabledCurrencies={tripEnabledCurrencies.length > 0 ? tripEnabledCurrencies : ['USD']} 
+            currentUser={currentUser}
+            onClose={() => setIsModalOpen(false)} 
+            onSuccess={() => { setIsModalOpen(false); fetchData(); setActiveTab('expenses'); }} 
         />
       )}
+    </div>
+  );
+};
+
+interface InviteParticipantsModalProps {
+  tripId: string;
+  existingParticipants: Participant[];
+  currentUser?: UserProfile | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+const InviteParticipantsModal: React.FC<InviteParticipantsModalProps> = ({ tripId, existingParticipants, currentUser, onClose, onSuccess }) => {
+  const [activeTab, setActiveTab] = useState<'existing' | 'new'>('existing');
+  const [search, setSearch] = useState('');
+  const [companions, setCompanions] = useState<UserProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newMascot, setNewMascot] = useState(MASCOTS[0]);
+  const [inviteLoading, setInviteLoading] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchCompanions();
+  }, [currentUser]);
+
+  const fetchCompanions = async () => {
+    setLoading(true);
+    try {
+      if (!currentUser) return;
+      // 1. Find all trips user participated in
+      const { data: myTrips } = await supabase.from('participants').select('trip_id').eq('user_id', currentUser.id);
+      const tripIds = myTrips?.map(t => t.trip_id) || [];
+      
+      // 2. Count frequency of other participants in those trips
+      let results: UserProfile[] = [];
+      if (tripIds.length > 0) {
+        const { data: others } = await supabase.from('participants').select('name, user_id, mascot, color').in('trip_id', tripIds).neq('user_id', currentUser.id);
+        const map = new Map<string, { profile: UserProfile, count: number }>();
+        others?.forEach(p => {
+          if (!p.user_id) return;
+          const entry = map.get(p.user_id) || { profile: { id: p.user_id, name: p.name, mascot: p.mascot || '👤', color: p.color || 'indigo' }, count: 0 };
+          entry.count++;
+          map.set(p.user_id, entry);
+        });
+        results = Array.from(map.values()).sort((a, b) => b.count - a.count).map(e => e.profile);
+      }
+
+      // 3. Fallback: just fetch some other users
+      if (results.length < 10) {
+        const { data: globalUsers } = await supabase.from('users').select('*').limit(20);
+        globalUsers?.forEach(u => {
+          if (u.id !== currentUser.id && !results.find(r => r.id === u.id)) {
+            results.push({ id: u.id, name: u.name, mascot: u.mascot || '👤', color: u.color || 'indigo' });
+          }
+        });
+      }
+      setCompanions(results);
+    } catch (err) { console.error(err); } finally { setLoading(false); }
+  };
+
+  const filteredCompanions = useMemo(() => {
+    return companions.filter(c => 
+      c.name.toLowerCase().includes(search.toLowerCase()) && 
+      !existingParticipants.some(p => p.user_id === c.id || p.name.toLowerCase() === c.name.toLowerCase())
+    );
+  }, [companions, search, existingParticipants]);
+
+  const handleInviteExisting = async (user: UserProfile) => {
+    setInviteLoading(user.id || user.name);
+    try {
+      const { error } = await supabase.from('participants').insert([{
+        trip_id: tripId,
+        name: user.name,
+        user_id: user.id,
+        color: user.color,
+        mascot: user.mascot
+      }]);
+      if (error) throw error;
+      onSuccess();
+    } catch (err: any) { alert(err.message); } finally { setInviteLoading(null); }
+  };
+
+  const handleAddNewParticipant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || inviteLoading) return;
+    
+    const normalizedName = newName.trim();
+    if (existingParticipants.some(p => p.name.toLowerCase() === normalizedName.toLowerCase())) {
+      alert("A participant with this name already exists in this trip.");
+      return;
+    }
+
+    setInviteLoading('new');
+    try {
+      const colorKeys = Object.keys(COLOR_MAP);
+      const randomColor = colorKeys[Math.floor(Math.random() * colorKeys.length)];
+      
+      // Check global user table
+      const { data: globalMatch } = await supabase.from('users').select('*').ilike('name', normalizedName).single();
+      
+      let finalUserId = globalMatch?.id;
+      if (!globalMatch) {
+        const { data: newUser, error: userError } = await supabase.from('users').insert([{
+          name: normalizedName,
+          mascot: newMascot,
+          color: randomColor
+        }]).select().single();
+        if (userError) throw userError;
+        finalUserId = newUser.id;
+      }
+
+      const { error: pError } = await supabase.from('participants').insert([{
+        trip_id: tripId,
+        name: normalizedName,
+        user_id: finalUserId,
+        color: randomColor,
+        mascot: globalMatch?.mascot || newMascot
+      }]);
+      if (pError) throw pError;
+      onSuccess();
+    } catch (err: any) { alert(err.message); } finally { setInviteLoading(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-white z-10">
+          <h3 className="text-xl font-black text-slate-900 tracking-tight">Invite Participant</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors p-2 hover:bg-slate-50 rounded-full"><X size={24} strokeWidth={3} /></button>
+        </div>
+
+        <div className="flex bg-slate-50 p-1.5 gap-1 m-4 rounded-2xl border border-slate-200 shadow-inner">
+          <button onClick={() => setActiveTab('existing')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'existing' ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'}`}>Existing Users</button>
+          <button onClick={() => setActiveTab('new')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'new' ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'}`}>Add New</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+          {activeTab === 'existing' ? (
+            <>
+              <div className="relative mb-2 px-2">
+                <input type="text" placeholder="Search global users..." className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 bg-white focus:border-indigo-500 outline-none text-sm font-bold shadow-sm" value={search} onChange={e => setSearch(e.target.value)} />
+                <Search size={16} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" />
+              </div>
+              <div className="space-y-2">
+                {loading ? (
+                  <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
+                ) : filteredCompanions.length === 0 ? (
+                  <div className="text-center py-20 text-slate-300 font-black uppercase tracking-widest text-[10px]">No users found</div>
+                ) : (
+                  filteredCompanions.map(c => (
+                    <button key={c.id} onClick={() => handleInviteExisting(c)} disabled={!!inviteLoading} className="w-full flex items-center justify-between p-3 rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all bg-white shadow-sm group active:scale-95">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl ${getParticipantTheme(c.color).bg} ${getParticipantTheme(c.color).text} flex items-center justify-center font-black text-xl`}>{c.mascot}</div>
+                        <span className="font-bold text-slate-800 text-sm">{c.name}</span>
+                      </div>
+                      <div className="bg-indigo-600 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                        {inviteLoading === c.id ? <Loader2 className="animate-spin" size={14} /> : <UserPlus size={14} />}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <form onSubmit={handleAddNewParticipant} className="space-y-6 px-2 animate-in slide-in-from-bottom-2">
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Full Name</label>
+                <input required autoFocus type="text" placeholder="e.g. John Doe" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-200 bg-white focus:border-indigo-500 outline-none font-bold text-slate-900 transition-all" value={newName} onChange={e => setNewName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Mascot</label>
+                <div className="grid grid-cols-6 gap-2 p-3 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                  {MASCOTS.map(m => (
+                    <button key={m} type="button" onClick={() => setNewMascot(m)} className={`text-2xl p-2 rounded-xl transition-all flex items-center justify-center ${newMascot === m ? 'bg-white shadow-md ring-2 ring-indigo-500' : 'opacity-40 hover:opacity-100'}`}>{m}</button>
+                  ))}
+                </div>
+              </div>
+              <button type="submit" disabled={!newName.trim() || !!inviteLoading} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-xs flex items-center justify-center gap-2 shadow-lg shadow-slate-100">
+                {inviteLoading === 'new' ? <Loader2 className="animate-spin" size={18} /> : <UserPlus size={18} />} Create & Invite
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

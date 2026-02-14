@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
-import { Participant, Expense, Trip } from '../types';
+import { Participant, Expense, Trip, UserProfile } from '../types';
 import { X, Check, Loader2, Utensils, Bed, Car, Plane, Ticket, ShoppingBag, Tag, ChevronRight, ArrowLeft, Calendar, Info } from 'lucide-react';
 import { getParticipantTheme } from './TripDetails';
 
@@ -10,6 +10,7 @@ interface AddExpenseModalProps {
   participants: Participant[];
   expenseToEdit?: Expense | null;
   enabledCurrencies: string[];
+  currentUser?: UserProfile | null;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -29,6 +30,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   participants, 
   expenseToEdit,
   enabledCurrencies,
+  currentUser,
   onClose, 
   onSuccess 
 }) => {
@@ -58,10 +60,16 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setCurrency(trip.default_currency);
       setCategory(null);
       setDate(new Date().toISOString().split('T')[0]);
-      setPayerIds([participants[0]?.id || '']);
+      
+      const defaultPayer = participants.find(p => 
+        (currentUser && p.user_id === currentUser.id) || 
+        (currentUser && p.name.toLowerCase() === currentUser.name.toLowerCase())
+      );
+      setPayerIds([defaultPayer?.id || participants[0]?.id || '']);
+      
       setSelectedSplitters(participants.map(p => p.id));
     }
-  }, [expenseToEdit, participants, trip]);
+  }, [expenseToEdit, participants, trip, currentUser]);
 
   const fetchRealtimeRate = async (targetCurrency: string, targetDate: string) => {
     if (targetCurrency === trip.default_currency) return 1;
